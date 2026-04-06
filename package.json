@@ -1,0 +1,13 @@
+{
+  "name": "hyperfleet-hooks",
+  "version": "1.0.0",
+  "description": "Pre-commit hooks registry for HyperFleet project ecosystem",
+  "private": true,
+  "bin": {
+    "hyperfleet-commitlint": "./hooks/commitlint-wrapper.js"
+  },
+  "dependencies": {
+    "@commitlint/cli": "^19.8.1",
+    "@commitlint/config-conventional": "^19.8.1"
+  }
+}
