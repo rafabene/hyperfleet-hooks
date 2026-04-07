@@ -1,0 +1,14 @@
+---
+# HyperFleet pre-commit hooks registry
+# https://pre-commit.com/
+
+- id: hyperfleet-commitlint
+  name: Validate commit message (HyperFleet Standard)
+  description: >
+    Validates commit messages against the HyperFleet Commit Standard
+    (Conventional Commits with optional JIRA prefix).
+  entry: hyperfleet-commitlint
+  language: golang
+  stages: [commit-msg]
+  pass_filenames: true
+  always_run: true
