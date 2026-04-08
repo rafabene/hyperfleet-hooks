@@ -36,13 +36,60 @@ From this point on, every `git commit` in that repository will validate the comm
 
 In Prow, a pre-built container image (`quay.io/openshift-hyperfleet/hooks`) is used to validate all commits and the PR title. See the [commitlint documentation](docs/commitlint.md) for Prow configuration details.
 
-## Features
+## Available Hooks
+
+| Hook ID | Stage | Description |
+| --- | --- | --- |
+| `hyperfleet-commitlint` | `commit-msg` | Validates commit messages against the [HyperFleet Commit Standard](https://github.com/openshift-hyperfleet/architecture/blob/main/hyperfleet/standards/commit-standard.md) |
+| `hyperfleet-golangci-lint` | `pre-commit` | Runs `make lint` — leverages the repo's existing bingo-managed golangci-lint |
+| `hyperfleet-gofmt` | `pre-commit` | Runs `make gofmt` — checks Go file formatting |
+| `hyperfleet-go-vet` | `pre-commit` | Runs `make go-vet` — finds suspicious constructs in Go code |
 
 ### Commitlint
 
 Validates commit messages and PR titles against the [HyperFleet Commit Standard](https://github.com/openshift-hyperfleet/architecture/blob/main/hyperfleet/standards/commit-standard.md).
 
 **[→ Full Documentation](docs/commitlint.md)**
+
+### Go Tooling Hooks
+
+The Go tooling hooks use `language: system` and delegate to the consuming repo's existing Make targets (`make lint`, `make gofmt`, `make go-vet`). This leverages the repo's existing [bingo](https://github.com/bwplotka/bingo)-managed tool resolution without reimplementing it. See the [dependency pinning standard](https://github.com/openshift-hyperfleet/architecture/blob/main/hyperfleet/standards/dependency-pinning.md) for details.
+
+**[→ Documentation](docs/go-tooling.md)**
+
+## Installation
+
+### Prerequisites
+
+- [pre-commit](https://pre-commit.com/#install) installed
+- Go 1.25+ available (for the `commitlint` hook — built automatically by pre-commit)
+- `make` targets (`lint`, `gofmt`, `go-vet`) in the consuming repo (for Go tooling hooks)
+
+### Adding to your repository
+
+Add this to your `.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: https://github.com/openshift-hyperfleet/hyperfleet-hooks
+    rev: main # Use latest release tag
+    hooks:
+      - id: hyperfleet-commitlint
+      - id: hyperfleet-golangci-lint
+      - id: hyperfleet-gofmt
+      - id: hyperfleet-go-vet
+```
+
+Then install the hooks:
+
+```bash
+pre-commit install --hook-type commit-msg
+pre-commit install --hook-type pre-commit
+```
+
+**Note**: The `commitlint` hook is built automatically by pre-commit (`language: golang`). The Go tooling hooks (`golangci-lint`, `gofmt`, `go-vet`) use `language: system` and require the consuming repo to have the corresponding Make targets.
+
+See [commitlint documentation](docs/commitlint.md) for Prow CI setup and [go-tooling documentation](docs/go-tooling.md) for bingo configuration.
 
 ## Development
 
