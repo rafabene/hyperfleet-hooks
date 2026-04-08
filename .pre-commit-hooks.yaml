@@ -12,3 +12,32 @@
   stages: [commit-msg]
   pass_filenames: true
   always_run: true
+
+- id: hyperfleet-golangci-lint
+  name: Run golangci-lint (bingo-aware)
+  description: >
+    Runs golangci-lint via Make target, which leverages the bingo-managed
+    version from .bingo/ when available.
+  entry: make lint
+  language: system
+  types: [go]
+  pass_filenames: false
+
+- id: hyperfleet-gofmt
+  name: Check Go formatting
+  description: >
+    Checks Go file formatting via Make target, which leverages the
+    bingo-managed version from .bingo/ when available.
+  entry: make gofmt
+  language: system
+  types: [go]
+  pass_filenames: false
+
+- id: hyperfleet-go-vet
+  name: Run go vet
+  description: >
+    Runs go vet via Make target to find suspicious constructs in Go code.
+  entry: make go-vet
+  language: system
+  types: [go]
+  pass_filenames: false

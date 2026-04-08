@@ -49,5 +49,5 @@ ARG APP_VERSION="0.0.0-dev"
 LABEL name="hyperfleet-hooks" \
       vendor="Red Hat" \
       version="${APP_VERSION}" \
-      summary="HyperFleet Hooks - Commit Message Validator" \
+      summary="HyperFleet Hooks - Pre-commit Validators" \
       description="Validates commit messages against HyperFleet standards"
