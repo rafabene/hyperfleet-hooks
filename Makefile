@@ -13,15 +13,17 @@ BINARY_NAME := hyperfleet-hooks
 BIN_DIR := bin
 
 # Version information (auto-detected from git)
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-GIT_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
-BUILD_DATE ?= $(shell date -u '+%Y-%m-%d_%H:%M:%S')
+APP_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+GIT_SHA     ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+GIT_DIRTY   ?= $(shell [ -z "$$(git status --porcelain 2>/dev/null)" ] || echo "-modified")
+BUILD_DATE  ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # Build flags
+GOFLAGS ?= -trimpath
 LDFLAGS := -ldflags "\
 	-s -w \
-	-X github.com/openshift-hyperfleet/hyperfleet-hooks/pkg/version.Version=$(VERSION) \
-	-X github.com/openshift-hyperfleet/hyperfleet-hooks/pkg/version.GitCommit=$(GIT_COMMIT) \
+	-X github.com/openshift-hyperfleet/hyperfleet-hooks/pkg/version.Version=$(APP_VERSION) \
+	-X github.com/openshift-hyperfleet/hyperfleet-hooks/pkg/version.GitCommit=$(GIT_SHA)$(GIT_DIRTY) \
 	-X github.com/openshift-hyperfleet/hyperfleet-hooks/pkg/version.BuildDate=$(BUILD_DATE)"
 
 # ==============================================================================
@@ -41,18 +43,18 @@ help: ## Show this help message
 # ------------------------------------------------------------------------------
 
 build: ## Build the binary
-	@echo "Building $(BINARY_NAME) $(VERSION)..."
+	@echo "Building $(BINARY_NAME) $(APP_VERSION)..."
 	@mkdir -p $(BIN_DIR)
-	go build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/hyperfleet-hooks
+	go build $(GOFLAGS) $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME) ./cmd/hyperfleet-hooks
 	@echo "✓ Built $(BIN_DIR)/$(BINARY_NAME)"
 
 build-all: ## Build binaries for all platforms
 	@echo "Building for all platforms..."
 	@mkdir -p $(BIN_DIR)
-	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/hyperfleet-hooks
-	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/hyperfleet-hooks
-	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/hyperfleet-hooks
-	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/hyperfleet-hooks
+	GOOS=linux GOARCH=amd64 go build $(GOFLAGS) $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/hyperfleet-hooks
+	GOOS=linux GOARCH=arm64 go build $(GOFLAGS) $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/hyperfleet-hooks
+	GOOS=darwin GOARCH=amd64 go build $(GOFLAGS) $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/hyperfleet-hooks
+	GOOS=darwin GOARCH=arm64 go build $(GOFLAGS) $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/hyperfleet-hooks
 	@echo "✓ Built all platform binaries"
 
 # ------------------------------------------------------------------------------

@@ -7,7 +7,7 @@
   description: >
     Validates commit messages against the HyperFleet Commit Standard
     (Conventional Commits with optional JIRA prefix).
-  entry: hyperfleet-commitlint
+  entry: hyperfleet-hooks commitlint
   language: golang
   stages: [commit-msg]
   pass_filenames: true
