@@ -1,0 +1,405 @@
+package commitlint
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
+)
+
+func TestValidateSHA(t *testing.T) {
+	tests := []struct {
+		name    string
+		sha     string
+		wantErr bool
+	}{
+		{
+			name:    "valid: full SHA (40 chars)",
+			sha:     "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+			wantErr: false,
+		},
+		{
+			name:    "valid: short SHA (7 chars)",
+			sha:     "a1b2c3d",
+			wantErr: false,
+		},
+		{
+			name:    "valid: medium SHA (12 chars)",
+			sha:     "a1b2c3d4e5f6",
+			wantErr: false,
+		},
+		{
+			name:    "invalid: empty SHA",
+			sha:     "",
+			wantErr: true,
+		},
+		{
+			name:    "invalid: too short (6 chars)",
+			sha:     "a1b2c3",
+			wantErr: true,
+		},
+		{
+			name:    "invalid: too long (41 chars)",
+			sha:     "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b01",
+			wantErr: true,
+		},
+		{
+			name:    "invalid: contains uppercase",
+			sha:     "A1B2C3D4E5F6",
+			wantErr: true,
+		},
+		{
+			name:    "invalid: contains non-hex",
+			sha:     "g1h2i3j4k5l6",
+			wantErr: true,
+		},
+		{
+			name:    "invalid: contains spaces",
+			sha:     "a1b2c3d e5f6",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateSHA(tt.sha)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateSHA() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestParsePullRefs(t *testing.T) {
+	tests := []struct {
+		name     string
+		pullRefs string
+		wantBase string
+		wantPR   string
+		wantErr  bool
+	}{
+		{
+			name:     "valid: standard Prow format",
+			pullRefs: "main:abc123,456:def789",
+			wantBase: "abc123",
+			wantPR:   "def789",
+			wantErr:  false,
+		},
+		{
+			name:     "valid: multiple PRs (use first)",
+			pullRefs: "main:abc123,456:def789,789:ghi012",
+			wantBase: "abc123",
+			wantPR:   "def789",
+			wantErr:  false,
+		},
+		{
+			name:     "valid: different base branch",
+			pullRefs: "release-1.0:abc123,456:def789",
+			wantBase: "abc123",
+			wantPR:   "def789",
+			wantErr:  false,
+		},
+		{
+			name:     "invalid: empty string",
+			pullRefs: "",
+			wantErr:  true,
+		},
+		{
+			name:     "invalid: missing PR ref",
+			pullRefs: "main:abc123",
+			wantErr:  true,
+		},
+		{
+			name:     "invalid: malformed base ref",
+			pullRefs: "main-abc123,456:def789",
+			wantErr:  true,
+		},
+		{
+			name:     "invalid: malformed PR ref",
+			pullRefs: "main:abc123,456-def789",
+			wantErr:  true,
+		},
+		{
+			name:     "invalid: missing colon in base",
+			pullRefs: "mainabc123,456:def789",
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotBase, gotPR, err := parsePullRefs(tt.pullRefs)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("parsePullRefs() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !tt.wantErr {
+				if gotBase != tt.wantBase {
+					t.Errorf("parsePullRefs() gotBase = %v, want %v", gotBase, tt.wantBase)
+				}
+				if gotPR != tt.wantPR {
+					t.Errorf("parsePullRefs() gotPR = %v, want %v", gotPR, tt.wantPR)
+				}
+			}
+		})
+	}
+}
+
+func TestGetCommitRange_EnvVariables(t *testing.T) {
+	// Create a temporary git repository for testing
+	tempDir := t.TempDir()
+	repo, err := git.PlainInit(tempDir, false)
+	if err != nil {
+		t.Fatalf("Failed to create temp repo: %v", err)
+	}
+
+	// Create initial commit
+	worktree, _ := repo.Worktree()
+	testFile := filepath.Join(tempDir, "test.txt")
+	os.WriteFile(testFile, []byte("test"), 0644)
+	worktree.Add("test.txt")
+	initialCommit, _ := worktree.Commit("initial commit", &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@example.com"},
+	})
+
+	// Save current directory
+	originalDir, _ := os.Getwd()
+	defer os.Chdir(originalDir)
+
+	// Change to temp repo directory
+	os.Chdir(tempDir)
+
+	tests := []struct {
+		name    string
+		env     map[string]string
+		wantErr bool
+	}{
+		{
+			name: "Priority 1: PULL_REFS",
+			env: map[string]string{
+				"PULL_REFS": "main:" + initialCommit.String() + ",123:" + initialCommit.String(),
+			},
+			wantErr: false,
+		},
+		{
+			name: "Priority 2: PULL_BASE_SHA + PULL_PULL_SHA",
+			env: map[string]string{
+				"PULL_BASE_SHA": initialCommit.String(),
+				"PULL_PULL_SHA": initialCommit.String(),
+			},
+			wantErr: false,
+		},
+		{
+			name: "Priority 3: PULL_BASE_REF (should fail - no origin)",
+			env: map[string]string{
+				"PULL_BASE_REF": "main",
+			},
+			wantErr: true,
+		},
+		{
+			name: "Invalid: Malformed PULL_REFS",
+			env: map[string]string{
+				"PULL_REFS": "invalid-format",
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clear all env vars first
+			os.Unsetenv("PULL_REFS")
+			os.Unsetenv("PULL_BASE_SHA")
+			os.Unsetenv("PULL_PULL_SHA")
+			os.Unsetenv("PULL_BASE_REF")
+
+			// Set test env vars
+			for k, v := range tt.env {
+				os.Setenv(k, v)
+			}
+
+			baseSHA, headSHA, err := getCommitRange(repo)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("getCommitRange() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !tt.wantErr {
+				if baseSHA == "" || headSHA == "" {
+					t.Errorf("getCommitRange() returned empty SHAs: base=%s, head=%s", baseSHA, headSHA)
+				}
+			}
+		})
+	}
+
+	// Cleanup env vars
+	os.Unsetenv("PULL_REFS")
+	os.Unsetenv("PULL_BASE_SHA")
+	os.Unsetenv("PULL_PULL_SHA")
+	os.Unsetenv("PULL_BASE_REF")
+}
+
+func TestGetCommitsInRange_Integration(t *testing.T) {
+	// Create a temporary git repository
+	tempDir := t.TempDir()
+	repo, err := git.PlainInit(tempDir, false)
+	if err != nil {
+		t.Fatalf("Failed to create temp repo: %v", err)
+	}
+
+	worktree, _ := repo.Worktree()
+
+	// Helper to create a commit
+	createCommit := func(filename, content, message string) string {
+		testFile := filepath.Join(tempDir, filename)
+		os.WriteFile(testFile, []byte(content), 0644)
+		worktree.Add(filename)
+		hash, _ := worktree.Commit(message, &git.CommitOptions{
+			Author: &object.Signature{Name: "Test", Email: "test@example.com"},
+		})
+		return hash.String()
+	}
+
+	// Create commit history: base -> commit1 -> commit2 -> head
+	base := createCommit("file1.txt", "base", "feat: base commit")
+	commit1 := createCommit("file2.txt", "content1", "feat: commit 1")
+	commit2 := createCommit("file3.txt", "content2", "fix: commit 2")
+	head := createCommit("file4.txt", "content3", "docs: commit 3")
+
+	tests := []struct {
+		name        string
+		baseSHA     string
+		headSHA     string
+		wantCount   int
+		wantCommits []string
+		wantErr     bool
+	}{
+		{
+			name:        "valid: 3 commits in range",
+			baseSHA:     base,
+			headSHA:     head,
+			wantCount:   3,
+			wantCommits: []string{head, commit2, commit1}, // Reverse chronological order
+			wantErr:     false,
+		},
+		{
+			name:        "valid: 1 commit in range",
+			baseSHA:     commit2,
+			headSHA:     head,
+			wantCount:   1,
+			wantCommits: []string{head},
+			wantErr:     false,
+		},
+		{
+			name:        "valid: head == base (no commits)",
+			baseSHA:     head,
+			headSHA:     head,
+			wantCount:   0,
+			wantCommits: []string{},
+			wantErr:     false,
+		},
+		// Note: go-git's repo.Log() doesn't immediately error on non-existent SHA
+		// The error occurs during iteration, but if base == head it returns empty
+		// SHA validation is done at the validatePR level, not here
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			commits, err := getCommitsInRange(repo, tt.baseSHA, tt.headSHA)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("getCommitsInRange() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !tt.wantErr {
+				if len(commits) != tt.wantCount {
+					t.Errorf("getCommitsInRange() got %d commits, want %d", len(commits), tt.wantCount)
+				}
+
+				for i, want := range tt.wantCommits {
+					if i >= len(commits) {
+						t.Errorf("getCommitsInRange() missing commit at index %d", i)
+						continue
+					}
+					if commits[i] != want {
+						t.Errorf("getCommitsInRange() commit[%d] = %s, want %s", i, commits[i][:8], want[:8])
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestGetCommitMessage(t *testing.T) {
+	// Create a temporary git repository
+	tempDir := t.TempDir()
+	repo, err := git.PlainInit(tempDir, false)
+	if err != nil {
+		t.Fatalf("Failed to create temp repo: %v", err)
+	}
+
+	worktree, _ := repo.Worktree()
+
+	// Create a commit with multi-line message
+	testFile := filepath.Join(tempDir, "test.txt")
+	os.WriteFile(testFile, []byte("test"), 0644)
+	worktree.Add("test.txt")
+
+	multilineMessage := `feat: add new feature
+
+This is a detailed description
+of the feature.
+
+It spans multiple lines.`
+
+	hash, _ := worktree.Commit(multilineMessage, &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@example.com"},
+	})
+
+	tests := []struct {
+		name           string
+		sha            string
+		wantSubject    string
+		wantMessage    string
+		wantErr        bool
+	}{
+		{
+			name:        "valid: multi-line message",
+			sha:         hash.String(),
+			wantSubject: "feat: add new feature",
+			wantMessage: multilineMessage,
+			wantErr:     false,
+		},
+		{
+			name:    "invalid: non-existent SHA",
+			sha:     "0000000000000000000000000000000000000000",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			message, subject, err := getCommitMessage(repo, tt.sha)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("getCommitMessage() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !tt.wantErr {
+				if subject != tt.wantSubject {
+					t.Errorf("getCommitMessage() subject = %v, want %v", subject, tt.wantSubject)
+				}
+				if message != tt.wantMessage {
+					t.Errorf("getCommitMessage() message = %v, want %v", message, tt.wantMessage)
+				}
+			}
+		})
+	}
+}

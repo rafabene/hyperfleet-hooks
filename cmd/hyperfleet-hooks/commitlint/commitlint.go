@@ -1,14 +1,28 @@
 package commitlint
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
+	"regexp"
 	"strings"
+	"time"
 
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/openshift-hyperfleet/hyperfleet-hooks/pkg/commitlint"
 	ghclient "github.com/openshift-hyperfleet/hyperfleet-hooks/pkg/github"
 	"github.com/spf13/cobra"
+)
+
+var (
+	// ErrStopIteration is used to stop commit iteration when base is reached
+	ErrStopIteration = errors.New("stop iteration")
+
+	// shaPattern matches valid git SHA (7-40 hex characters)
+	shaPattern = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 )
 
 var (
@@ -116,16 +130,30 @@ func readStdin() (string, error) {
 }
 
 func validatePR(validator *commitlint.Validator) error {
+	// Open git repository once and reuse
+	repo, err := git.PlainOpen(".")
+	if err != nil {
+		return fmt.Errorf("failed to open git repository: %w", err)
+	}
+
 	// Get commit range from environment
-	baseSHA, headSHA, err := getCommitRange()
+	baseSHA, headSHA, err := getCommitRange(repo)
 	if err != nil {
 		return fmt.Errorf("failed to get commit range: %w", err)
+	}
+
+	// Validate SHA format
+	if err := validateSHA(baseSHA); err != nil {
+		return fmt.Errorf("invalid base SHA: %w", err)
+	}
+	if err := validateSHA(headSHA); err != nil {
+		return fmt.Errorf("invalid head SHA: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "🔍 Validating commits in range: %s..%s\n", baseSHA[:8], headSHA[:8])
 
 	// Get all commits in range using git log
-	commits, err := getCommitsInRange(baseSHA, headSHA)
+	commits, err := getCommitsInRange(repo, baseSHA, headSHA)
 	if err != nil {
 		return fmt.Errorf("failed to get commits: %w", err)
 	}
@@ -143,7 +171,7 @@ func validatePR(validator *commitlint.Validator) error {
 
 	for _, sha := range commits {
 		// Get commit message using git show
-		msg, subject, err := getCommitMessage(sha)
+		msg, subject, err := getCommitMessage(repo, sha)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "❌ Failed to get message for %s: %v\n", sha[:8], err)
 			failedCommits = append(failedCommits, sha[:8])
@@ -175,7 +203,11 @@ func validatePR(validator *commitlint.Validator) error {
 
 	prTitleFailed := false
 	client := ghclient.NewClient()
-	title, err := client.GetPRTitleFromEnv()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	title, err := client.GetPRTitleFromEnv(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "⚠️  Could not fetch PR title: %v\n", err)
 		fmt.Fprintln(os.Stderr, "   Skipping PR title validation")
@@ -231,7 +263,7 @@ func validatePR(validator *commitlint.Validator) error {
 
 // getCommitRange returns the base and head SHA for the PR commits
 // Priority: PULL_REFS > PULL_BASE_SHA+PULL_PULL_SHA > PULL_BASE_REF+HEAD
-func getCommitRange() (baseSHA, headSHA string, err error) {
+func getCommitRange(repo *git.Repository) (baseSHA, headSHA string, err error) {
 	// Priority 1: PULL_REFS (most accurate, Prow standard)
 	if pullRefs := os.Getenv("PULL_REFS"); pullRefs != "" {
 		baseSHA, headSHA, err = parsePullRefs(pullRefs)
@@ -255,20 +287,18 @@ func getCommitRange() (baseSHA, headSHA string, err error) {
 	}
 
 	// Get SHA of origin/baseBranch
-	cmd := exec.Command("git", "rev-parse", "origin/"+baseBranch)
-	output, err := cmd.Output()
+	baseRef, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", baseBranch), true)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to get base SHA: %w", err)
 	}
-	baseSHA = strings.TrimSpace(string(output))
+	baseSHA = baseRef.Hash().String()
 
 	// Get SHA of HEAD
-	cmd = exec.Command("git", "rev-parse", "HEAD")
-	output, err = cmd.Output()
+	head, err := repo.Head()
 	if err != nil {
 		return "", "", fmt.Errorf("failed to get HEAD SHA: %w", err)
 	}
-	headSHA = strings.TrimSpace(string(output))
+	headSHA = head.Hash().String()
 
 	return baseSHA, headSHA, nil
 }
@@ -304,41 +334,65 @@ func parsePullRefs(pullRefs string) (baseSHA, prSHA string, err error) {
 	return baseSHA, prSHA, nil
 }
 
-// getCommitsInRange returns all commit SHAs in the given range
-func getCommitsInRange(baseSHA, headSHA string) ([]string, error) {
-	commitRange := fmt.Sprintf("%s..%s", baseSHA, headSHA)
-	cmd := exec.Command("git", "log", "--format=%H", commitRange)
-
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("git log failed: %w", err)
+// validateSHA checks if a string is a valid git SHA
+func validateSHA(sha string) error {
+	if sha == "" {
+		return fmt.Errorf("SHA cannot be empty")
 	}
+	if !shaPattern.MatchString(sha) {
+		return fmt.Errorf("invalid SHA format: %s (expected 7-40 hex characters)", sha)
+	}
+	return nil
+}
 
-	commits := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(commits) == 1 && commits[0] == "" {
-		return []string{}, nil
+// getCommitsInRange returns all commit SHAs in the given range
+func getCommitsInRange(repo *git.Repository, baseSHA, headSHA string) ([]string, error) {
+	// Get commit objects
+	headHash := plumbing.NewHash(headSHA)
+	baseHash := plumbing.NewHash(baseSHA)
+
+	// Create log iterator from head
+	commitIter, err := repo.Log(&git.LogOptions{
+		From: headHash,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get commit log: %w", err)
+	}
+	defer commitIter.Close()
+
+	var commits []string
+	err = commitIter.ForEach(func(c *object.Commit) error {
+		// Stop when we reach the base commit
+		if c.Hash == baseHash {
+			return ErrStopIteration
+		}
+		commits = append(commits, c.Hash.String())
+		return nil
+	})
+
+	// ErrStopIteration is expected when we reach the base commit
+	if err != nil && !errors.Is(err, ErrStopIteration) {
+		return nil, fmt.Errorf("failed to iterate commits: %w", err)
 	}
 
 	return commits, nil
 }
 
 // getCommitMessage returns the full message and subject of a commit
-func getCommitMessage(sha string) (message, subject string, err error) {
-	// Get full message
-	cmd := exec.Command("git", "log", "-1", "--format=%B", sha)
-	output, err := cmd.Output()
+func getCommitMessage(repo *git.Repository, sha string) (message, subject string, err error) {
+	// Get commit object
+	hash := plumbing.NewHash(sha)
+	commit, err := repo.CommitObject(hash)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to get commit message: %w", err)
+		return "", "", fmt.Errorf("failed to get commit: %w", err)
 	}
-	message = strings.TrimSpace(string(output))
 
-	// Get subject
-	cmd = exec.Command("git", "log", "-1", "--format=%s", sha)
-	output, err = cmd.Output()
-	if err != nil {
-		return "", "", fmt.Errorf("failed to get commit subject: %w", err)
-	}
-	subject = strings.TrimSpace(string(output))
+	// Full message
+	message = strings.TrimSpace(commit.Message)
+
+	// Subject is the first line of the message
+	lines := strings.SplitN(message, "\n", 2)
+	subject = strings.TrimSpace(lines[0])
 
 	return message, subject, nil
 }

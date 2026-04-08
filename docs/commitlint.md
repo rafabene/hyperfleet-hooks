@@ -35,7 +35,7 @@ Complete guide for using hyperfleet-hooks commitlint in local development and Pr
    ```yaml
    repos:
      - repo: https://github.com/openshift-hyperfleet/hyperfleet-hooks
-       rev: v1.0.0  # Use latest version
+       rev: main  # Use latest version
        hooks:
          - id: hyperfleet-commitlint
    ```
@@ -93,7 +93,7 @@ presubmits:
     spec:
       containers:
       - name: validate
-        image: quay.io/openshift-hyperfleet/hooks:v1.0.0
+        image: quay.io/openshift-hyperfleet/hooks:latest
         command:
         - hyperfleet-hooks
         - commitlint
@@ -148,7 +148,7 @@ All HyperFleet components use the same container image. **No installation requir
 └─────────────────────────────────┘
               │
               ▼
-   quay.io/openshift-hyperfleet/hooks:v1.0.0
+   quay.io/openshift-hyperfleet/hooks:latest
               │
     ┌─────────┼─────────┬─────────┐
     ▼         ▼         ▼         ▼
