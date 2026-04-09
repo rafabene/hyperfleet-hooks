@@ -13,6 +13,9 @@ WORKDIR /build
 RUN chown 1001:0 /build
 USER 1001
 
+ENV GOBIN=/build/.gobin
+RUN mkdir -p $GOBIN
+
 COPY --chown=1001:0 go.mod go.sum ./
 RUN --mount=type=cache,target=/opt/app-root/src/go/pkg/mod,uid=1001 \
     go mod download
@@ -33,6 +36,8 @@ FROM ${BASE_IMAGE}
 
 WORKDIR /app
 
+# ubi9-micro doesn't include CA certificates; copy from builder for TLS (e.g. GitHub API)
+COPY --from=builder /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
 COPY --from=builder /build/bin/hyperfleet-hooks /app/hyperfleet-hooks
 
 USER 65532:65532

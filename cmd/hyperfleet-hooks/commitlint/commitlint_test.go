@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/stretchr/testify/require"
 )
 
 func TestValidateSHA(t *testing.T) {
@@ -158,24 +159,26 @@ func TestGetCommitRange_EnvVariables(t *testing.T) {
 	}
 
 	// Create initial commit
-	worktree, _ := repo.Worktree()
+	worktree, err := repo.Worktree()
+	require.NoError(t, err)
 	testFile := filepath.Join(tempDir, "test.txt")
-	os.WriteFile(testFile, []byte("test"), 0644)
-	worktree.Add("test.txt")
-	initialCommit, _ := worktree.Commit("initial commit", &git.CommitOptions{
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+	if _, err := worktree.Add("test.txt"); err != nil {
+		t.Fatalf("Failed to add test file: %v", err)
+	}
+	initialCommit, err := worktree.Commit("initial commit", &git.CommitOptions{
 		Author: &object.Signature{Name: "Test", Email: "test@example.com"},
 	})
+	require.NoError(t, err)
 
-	// Save current directory
-	originalDir, _ := os.Getwd()
-	defer os.Chdir(originalDir)
-
-	// Change to temp repo directory
-	os.Chdir(tempDir)
+	// Change to temp repo directory (auto-restores on cleanup)
+	t.Chdir(tempDir)
 
 	tests := []struct {
-		name    string
 		env     map[string]string
+		name    string
 		wantErr bool
 	}{
 		{
@@ -211,15 +214,14 @@ func TestGetCommitRange_EnvVariables(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Clear all env vars first
-			os.Unsetenv("PULL_REFS")
-			os.Unsetenv("PULL_BASE_SHA")
-			os.Unsetenv("PULL_PULL_SHA")
-			os.Unsetenv("PULL_BASE_REF")
+			// Clear all env vars using t.Setenv (auto-restores when subtest ends)
+			for _, key := range []string{"PULL_REFS", "PULL_BASE_SHA", "PULL_PULL_SHA", "PULL_BASE_REF"} {
+				t.Setenv(key, "")
+			}
 
 			// Set test env vars
 			for k, v := range tt.env {
-				os.Setenv(k, v)
+				t.Setenv(k, v)
 			}
 
 			baseSHA, headSHA, err := getCommitRange(repo)
@@ -236,12 +238,6 @@ func TestGetCommitRange_EnvVariables(t *testing.T) {
 			}
 		})
 	}
-
-	// Cleanup env vars
-	os.Unsetenv("PULL_REFS")
-	os.Unsetenv("PULL_BASE_SHA")
-	os.Unsetenv("PULL_PULL_SHA")
-	os.Unsetenv("PULL_BASE_REF")
 }
 
 func TestGetCommitsInRange_Integration(t *testing.T) {
@@ -252,16 +248,23 @@ func TestGetCommitsInRange_Integration(t *testing.T) {
 		t.Fatalf("Failed to create temp repo: %v", err)
 	}
 
-	worktree, _ := repo.Worktree()
+	worktree, err := repo.Worktree()
+	require.NoError(t, err)
 
 	// Helper to create a commit
 	createCommit := func(filename, content, message string) string {
+		t.Helper()
 		testFile := filepath.Join(tempDir, filename)
-		os.WriteFile(testFile, []byte(content), 0644)
-		worktree.Add(filename)
-		hash, _ := worktree.Commit(message, &git.CommitOptions{
+		if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
+			t.Fatalf("Failed to write test file: %v", err)
+		}
+		if _, err := worktree.Add(filename); err != nil {
+			t.Fatalf("Failed to add test file: %v", err)
+		}
+		hash, err := worktree.Commit(message, &git.CommitOptions{
 			Author: &object.Signature{Name: "Test", Email: "test@example.com"},
 		})
+		require.NoError(t, err)
 		return hash.String()
 	}
 
@@ -275,8 +278,8 @@ func TestGetCommitsInRange_Integration(t *testing.T) {
 		name        string
 		baseSHA     string
 		headSHA     string
-		wantCount   int
 		wantCommits []string
+		wantCount   int
 		wantErr     bool
 	}{
 		{
@@ -344,12 +347,17 @@ func TestGetCommitMessage(t *testing.T) {
 		t.Fatalf("Failed to create temp repo: %v", err)
 	}
 
-	worktree, _ := repo.Worktree()
+	worktree, err := repo.Worktree()
+	require.NoError(t, err)
 
 	// Create a commit with multi-line message
 	testFile := filepath.Join(tempDir, "test.txt")
-	os.WriteFile(testFile, []byte("test"), 0644)
-	worktree.Add("test.txt")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+	if _, err := worktree.Add("test.txt"); err != nil {
+		t.Fatalf("Failed to add test file: %v", err)
+	}
 
 	multilineMessage := `feat: add new feature
 
@@ -358,16 +366,17 @@ of the feature.
 
 It spans multiple lines.`
 
-	hash, _ := worktree.Commit(multilineMessage, &git.CommitOptions{
+	hash, err := worktree.Commit(multilineMessage, &git.CommitOptions{
 		Author: &object.Signature{Name: "Test", Email: "test@example.com"},
 	})
+	require.NoError(t, err)
 
 	tests := []struct {
-		name           string
-		sha            string
-		wantSubject    string
-		wantMessage    string
-		wantErr        bool
+		name        string
+		sha         string
+		wantSubject string
+		wantMessage string
+		wantErr     bool
 	}{
 		{
 			name:        "valid: multi-line message",
@@ -399,6 +408,26 @@ It spans multiple lines.`
 				if message != tt.wantMessage {
 					t.Errorf("getCommitMessage() message = %v, want %v", message, tt.wantMessage)
 				}
+			}
+		})
+	}
+}
+
+func TestShortSHA(t *testing.T) {
+	tests := []struct {
+		name string
+		sha  string
+		want string
+	}{
+		{name: "full SHA", sha: "a1b2c3d4e5f6a7b8c9d0", want: "a1b2c3d4"},
+		{name: "exactly 8 chars", sha: "a1b2c3d4", want: "a1b2c3d4"},
+		{name: "short SHA (7 chars)", sha: "a1b2c3d", want: "a1b2c3d"},
+		{name: "empty string", sha: "", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shortSHA(tt.sha); got != tt.want {
+				t.Errorf("shortSHA(%q) = %q, want %q", tt.sha, got, tt.want)
 			}
 		})
 	}

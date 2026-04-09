@@ -1,6 +1,7 @@
 package commitlint
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -10,8 +11,8 @@ func TestValidator_Validate(t *testing.T) {
 	tests := []struct {
 		name    string
 		message string
-		wantErr bool
 		errRule string
+		wantErr bool
 	}{
 		// Valid commits
 		{
@@ -109,9 +110,9 @@ This commit adds auto-scaling capabilities.`,
 		},
 		{
 			name:    "invalid: subject only whitespace",
-			message: "feat:    ",  // Will be trimmed to "feat:", matching header-format check
+			message: "feat:    ", // Will be trimmed to "feat:", matching header-format check
 			wantErr: true,
-			errRule: "header-format",  // After trim, becomes "feat:" which doesn't match pattern
+			errRule: "header-format", // After trim, becomes "feat:" which doesn't match pattern
 		},
 		{
 			name:    "invalid: uppercase type",
@@ -132,14 +133,16 @@ This commit adds auto-scaling capabilities.`,
 			errRule: "header-format",
 		},
 		{
-			name:    "invalid: header too long",
-			message: "feat: this is a very long commit message that exceeds the maximum allowed length of seventy two characters",
+			name: "invalid: header too long",
+			message: "feat: this is a very long commit message that exceeds the maximum" +
+				" allowed length of seventy two characters",
 			wantErr: true,
 			errRule: "header-max-length",
 		},
 		{
-			name:    "invalid: JIRA prefix should not count toward length - but this is still too long",
-			message: "HYPERFLEET-12345 - feat: this is a very long commit message that exceeds the maximum allowed length of seventy two characters",
+			name: "invalid: JIRA prefix should not count toward length - but this is still too long",
+			message: "HYPERFLEET-12345 - feat: this is a very long commit message that exceeds" +
+				" the maximum allowed length of seventy two characters",
 			wantErr: true,
 			errRule: "header-max-length",
 		},
@@ -178,10 +181,7 @@ func TestValidator_JIRAPrefixExcludedFromLength(t *testing.T) {
 
 	// This is exactly 72 characters (type: subject), JIRA prefix not counted
 	// "feat: " (6) + 66 characters = 72
-	msg := "HYPERFLEET-123 - feat: " + string(make([]byte, 66))
-	for i := range msg[len("HYPERFLEET-123 - feat: "):] {
-		msg = msg[:len("HYPERFLEET-123 - feat: ")+i] + "a" + msg[len("HYPERFLEET-123 - feat: ")+i+1:]
-	}
+	msg := "HYPERFLEET-123 - feat: " + strings.Repeat("a", 66)
 
 	result := validator.Validate(msg)
 	if !result.Valid {
@@ -202,8 +202,8 @@ func TestValidator_ValidatePRTitle(t *testing.T) {
 	tests := []struct {
 		name    string
 		title   string
-		wantErr bool
 		errRule string
+		wantErr bool
 	}{
 		{
 			name:    "valid: PR title with JIRA",

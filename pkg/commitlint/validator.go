@@ -3,15 +3,16 @@ package commitlint
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
 // Validator validates commit messages against HyperFleet standards
 type Validator struct {
-	validTypes       map[string]bool
-	maxSubjectLength int
 	commitPattern    *regexp.Regexp
 	jiraPattern      *regexp.Regexp
+	validTypes       map[string]bool
+	maxSubjectLength int
 }
 
 // ValidationError represents a validation error
@@ -26,8 +27,8 @@ func (e *ValidationError) Error() string {
 
 // ValidationResult contains the result of validation
 type ValidationResult struct {
-	Valid  bool
 	Errors []*ValidationError
+	Valid  bool
 }
 
 // NewValidator creates a new commit message validator
@@ -84,8 +85,10 @@ func (v *Validator) Validate(message string) *ValidationResult {
 	if len(headerWithoutJira) > v.maxSubjectLength {
 		result.Valid = false
 		result.Errors = append(result.Errors, &ValidationError{
-			Rule:    "header-max-length",
-			Message: fmt.Sprintf("header must not exceed %d characters (excluding JIRA prefix), got %d", v.maxSubjectLength, len(headerWithoutJira)),
+			Rule: "header-max-length",
+			Message: fmt.Sprintf(
+				"header must not exceed %d characters (excluding JIRA prefix), got %d",
+				v.maxSubjectLength, len(headerWithoutJira)),
 		})
 	}
 
@@ -132,6 +135,7 @@ func (v *Validator) ValidateFile(filePath string) (*ValidationResult, error) {
 	return v.Validate(content), nil
 }
 
+// ValidatePRTitle validates a PR title, requiring both valid commit format and JIRA prefix.
 func (v *Validator) ValidatePRTitle(title string) *ValidationResult {
 	result := v.Validate(title)
 
@@ -151,5 +155,6 @@ func (v *Validator) getValidTypesString() string {
 	for t := range v.validTypes {
 		types = append(types, t)
 	}
+	sort.Strings(types)
 	return strings.Join(types, ", ")
 }
