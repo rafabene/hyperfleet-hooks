@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/google/go-github/v60/github"
+	"github.com/google/go-github/v84/github"
 )
 
 // Client wraps GitHub API client
@@ -23,6 +23,7 @@ func NewClient() *Client {
 	if token != "" {
 		client = github.NewClient(nil).WithAuthToken(token)
 	} else {
+		fmt.Fprintln(os.Stderr, "⚠️  GITHUB_TOKEN not set — using unauthenticated GitHub API (60 req/hr rate limit)")
 		client = github.NewClient(nil)
 	}
 
@@ -56,21 +57,26 @@ func (c *Client) GetPRTitle(ctx context.Context, repo string, prNumber int) (str
 
 // GetPRTitleFromEnv fetches PR title using environment variables
 // Uses REPO_OWNER, REPO_NAME, PULL_NUMBER from Prow
-func (c *Client) GetPRTitleFromEnv(ctx context.Context) (string, error) {
+// Returns the PR title and the PR number string
+func (c *Client) GetPRTitleFromEnv(ctx context.Context) (title string, prNumberStr string, err error) {
 	owner := os.Getenv("REPO_OWNER")
 	repoName := os.Getenv("REPO_NAME")
-	prNumberStr := os.Getenv("PULL_NUMBER")
+	prNumberStr = os.Getenv("PULL_NUMBER")
 
 	if owner == "" || repoName == "" || prNumberStr == "" {
-		return "", fmt.Errorf("missing required environment variables (REPO_OWNER, REPO_NAME, PULL_NUMBER)")
+		return "", "", fmt.Errorf("missing required environment variables (REPO_OWNER, REPO_NAME, PULL_NUMBER)")
 	}
 
 	var prNumber int
-	_, err := fmt.Sscanf(prNumberStr, "%d", &prNumber)
+	_, err = fmt.Sscanf(prNumberStr, "%d", &prNumber)
 	if err != nil {
-		return "", fmt.Errorf("invalid PULL_NUMBER: %s", prNumberStr)
+		return "", "", fmt.Errorf("invalid PULL_NUMBER %q: %w", prNumberStr, err)
 	}
 
 	repo := fmt.Sprintf("%s/%s", owner, repoName)
-	return c.GetPRTitle(ctx, repo, prNumber)
+	title, err = c.GetPRTitle(ctx, repo, prNumber)
+	if err != nil {
+		return "", "", fmt.Errorf("fetching PR title from env: %w", err)
+	}
+	return title, prNumberStr, nil
 }

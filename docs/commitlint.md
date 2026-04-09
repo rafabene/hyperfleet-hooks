@@ -35,7 +35,7 @@ Complete guide for using hyperfleet-hooks commitlint in local development and Pr
    ```yaml
    repos:
      - repo: https://github.com/openshift-hyperfleet/hyperfleet-hooks
-       rev: main  # Use latest version
+       rev: v0.1.0  # pin to a specific tag
        hooks:
          - id: hyperfleet-commitlint
    ```
@@ -119,6 +119,8 @@ Prow automatically provides these variables (no configuration needed):
 | `REPO_NAME` | `hyperfleet-api` | Repository name |
 | `GITHUB_TOKEN` | `ghp_...` | GitHub API token (optional) |
 
+> **Note**: If `GITHUB_TOKEN` is not set, the tool uses the unauthenticated GitHub API (60 req/hr rate limit) and prints a warning to stderr. Set `GITHUB_TOKEN` in CI environments to avoid hitting rate limits.
+
 **Commit range detection priority**:
 1. `PULL_REFS` (most accurate)
 2. `PULL_BASE_SHA` + `PULL_PULL_SHA`
@@ -138,7 +140,7 @@ All HyperFleet components use the same container image. **No installation requir
 
 ### Architecture
 
-```
+```text
 ┌─────────────────────────────────┐
 │  hyperfleet-hooks Repository    │
 │                                 │
@@ -165,7 +167,7 @@ Components just reference the image in Prow configuration. No dependencies to in
 ```bash
 # In openshift/release repository
 cd ci-operator/jobs/openshift-hyperfleet/
-sed -i 's|hooks:v1.0.0|hooks:v1.1.0|g' */\*-presubmits.yaml
+sed -i 's|hooks:v1.0.0|hooks:v1.1.0|g' */*-presubmits.yaml
 git commit -m "ci: update hyperfleet-hooks to v1.1.0"
 ```
 
@@ -200,8 +202,8 @@ hyperfleet-hooks version
 
 ### Format
 
-```
-[JIRA-ID - ]<type>: <subject>
+```text
+[HYPERFLEET-XXX - ]<type>: <subject>
 
 [body]
 
@@ -225,7 +227,7 @@ hyperfleet-hooks version
 ### Rules
 
 - **JIRA ID**: Optional, format `HYPERFLEET-XXX - `
-- **Type**: Required, one of the valid types (see below)
+- **Type**: Required, one of the valid types (see above)
 - **Subject**: Required, imperative mood, no period
 - **Header Length**: `<type>: <subject>` must not exceed 72 characters (excluding JIRA prefix)
 - **Body**: Optional, separated by blank line
@@ -234,7 +236,7 @@ hyperfleet-hooks version
 ### Examples
 
 **Valid**:
-```
+```text
 ✅ feat: add user authentication
 ✅ HYPERFLEET-123 - fix: resolve memory leak
 ✅ docs: update API documentation
@@ -242,7 +244,7 @@ hyperfleet-hooks version
 ```
 
 **Invalid**:
-```
+```text
 ❌ added new feature           # Missing type
 ❌ feat add feature             # Missing colon
 ❌ Feat: add feature            # Type must be lowercase
@@ -254,7 +256,7 @@ hyperfleet-hooks version
 Common errors:
 - `header must match format` → Add type: `feat:`, `fix:`, etc.
 - `type must be one of` → Use valid type (feat, fix, docs, etc.)
-- `header too long` → `<type>: <subject>` must be ≤ 72 chars (excluding JIRA prefix)
+- `header must not exceed 72 characters` → `<type>: <subject>` must be ≤ 72 chars (excluding JIRA prefix)
 - `pr-title-requires-jira` → PR titles must start with `HYPERFLEET-XXX - `
 
 Hook issues:

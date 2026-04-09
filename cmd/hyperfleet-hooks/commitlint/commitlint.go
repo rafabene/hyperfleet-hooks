@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -17,9 +18,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const commitStandardURL = "https://github.com/openshift-hyperfleet/" +
+	"architecture/blob/main/hyperfleet/standards/commit-standard.md"
+
 var (
-	// ErrStopIteration is used to stop commit iteration when base is reached
-	ErrStopIteration = errors.New("stop iteration")
+	// errStopIteration is used to stop commit iteration when base is reached
+	errStopIteration = errors.New("stop iteration")
+
+	// errValidationFailed is returned when commit message validation fails
+	errValidationFailed = errors.New("validation failed")
 
 	// shaPattern matches valid git SHA (7-40 hex characters)
 	shaPattern = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
@@ -67,13 +74,10 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// If --pr is provided, validate all commits and PR title
 	if pr {
-		return validatePR(validator)
+		return validatePR(cmd.Context(), validator)
 	}
 
 	// Single commit validation (from file or stdin)
-	var message string
-	var err error
-
 	if len(args) > 0 {
 		// Read from file
 		filePath := args[0]
@@ -89,9 +93,8 @@ func run(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to read from stdin: %w", err)
 	}
-	message = content
 
-	result := validator.Validate(message)
+	result := validator.Validate(content)
 	return handleValidationResult(result, "stdin")
 }
 
@@ -106,30 +109,30 @@ func handleValidationResult(result *commitlint.ValidationResult, source string) 
 		fmt.Fprintf(os.Stderr, "✖   %s\n", err.Error())
 	}
 	fmt.Fprintf(os.Stderr, "\n✖   found %d problems, 0 warnings\n", len(result.Errors))
-	fmt.Fprintln(os.Stderr, "ⓘ   Get help: https://github.com/openshift-hyperfleet/architecture/blob/main/hyperfleet/standards/commit-standard.md")
+	fmt.Fprintf(os.Stderr, "ⓘ   Get help: %s\n", commitStandardURL)
 
-	return fmt.Errorf("validation failed")
+	return errValidationFailed
 }
 
 func readStdin() (string, error) {
 	stat, err := os.Stdin.Stat()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to stat stdin: %w", err)
 	}
 
 	if (stat.Mode() & os.ModeCharDevice) != 0 {
 		return "", fmt.Errorf("no input provided (stdin is empty)")
 	}
 
-	content, err := os.ReadFile("/dev/stdin")
+	content, err := io.ReadAll(os.Stdin)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to read from stdin: %w", err)
 	}
 
 	return string(content), nil
 }
 
-func validatePR(validator *commitlint.Validator) error {
+func validatePR(ctx context.Context, validator *commitlint.Validator) error {
 	// Open git repository once and reuse
 	repo, err := git.PlainOpen(".")
 	if err != nil {
@@ -143,14 +146,14 @@ func validatePR(validator *commitlint.Validator) error {
 	}
 
 	// Validate SHA format
-	if err := validateSHA(baseSHA); err != nil {
-		return fmt.Errorf("invalid base SHA: %w", err)
+	if errBase := validateSHA(baseSHA); errBase != nil {
+		return fmt.Errorf("invalid base SHA: %w", errBase)
 	}
-	if err := validateSHA(headSHA); err != nil {
-		return fmt.Errorf("invalid head SHA: %w", err)
+	if errHead := validateSHA(headSHA); errHead != nil {
+		return fmt.Errorf("invalid head SHA: %w", errHead)
 	}
 
-	fmt.Fprintf(os.Stderr, "🔍 Validating commits in range: %s..%s\n", baseSHA[:8], headSHA[:8])
+	fmt.Fprintf(os.Stderr, "🔍 Validating commits in range: %s..%s\n", shortSHA(baseSHA), shortSHA(headSHA))
 
 	// Get all commits in range using git log
 	commits, err := getCommitsInRange(repo, baseSHA, headSHA)
@@ -166,19 +169,28 @@ func validatePR(validator *commitlint.Validator) error {
 	fmt.Fprintf(os.Stderr, "📝 Found %d commit(s) to validate\n\n", len(commits))
 
 	// Validate each commit
-	var failedCommits []string
-	passedCount := 0
+	failedCommits, passedCount := validateCommits(validator, repo, commits)
 
+	// Validate PR title
+	title, prTitleFailed := validatePRTitle(ctx, validator)
+
+	// Print summary and return result
+	return printSummary(failedCommits, prTitleFailed, commits, passedCount, title)
+}
+
+// validateCommits validates each commit message and returns failed commit SHAs and passed count
+func validateCommits(
+	validator *commitlint.Validator, repo *git.Repository, commits []string,
+) (failedCommits []string, passedCount int) {
 	for _, sha := range commits {
-		// Get commit message using git show
 		msg, subject, err := getCommitMessage(repo, sha)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "❌ Failed to get message for %s: %v\n", sha[:8], err)
-			failedCommits = append(failedCommits, sha[:8])
+			fmt.Fprintf(os.Stderr, "❌ Failed to get message for %s: %v\n", shortSHA(sha), err)
+			failedCommits = append(failedCommits, shortSHA(sha))
 			continue
 		}
 
-		fmt.Fprintf(os.Stderr, "Checking: %s - %s\n", sha[:8], subject)
+		fmt.Fprintf(os.Stderr, "Checking: %s - %s\n", shortSHA(sha), subject)
 
 		result := validator.Validate(msg)
 		if result.Valid {
@@ -192,45 +204,50 @@ func validatePR(validator *commitlint.Validator) error {
 				fmt.Fprintf(os.Stderr, "    ✖ %s\n", e.Error())
 			}
 			fmt.Fprintln(os.Stderr, "")
-			failedCommits = append(failedCommits, sha[:8])
+			failedCommits = append(failedCommits, shortSHA(sha))
 		}
 	}
+	return failedCommits, passedCount
+}
 
-	// Validate PR title
+// validatePRTitle fetches and validates the PR title via GitHub API
+func validatePRTitle(ctx context.Context, validator *commitlint.Validator) (title string, failed bool) {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Fprintln(os.Stderr, "📋 Validating PR title...")
 
-	prTitleFailed := false
 	client := ghclient.NewClient()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	title, err := client.GetPRTitleFromEnv(ctx)
+	title, prNumberStr, err := client.GetPRTitleFromEnv(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "⚠️  Could not fetch PR title: %v\n", err)
 		fmt.Fprintln(os.Stderr, "   Skipping PR title validation")
-	} else {
-		prNumberStr := os.Getenv("PULL_NUMBER")
-		fmt.Fprintf(os.Stderr, "PR #%s: %s\n", prNumberStr, title)
-
-		result := validator.ValidatePRTitle(title)
-		if result.Valid {
-			fmt.Fprintln(os.Stderr, "  ✅ PASS")
-		} else {
-			fmt.Fprintln(os.Stderr, "  ❌ FAIL")
-			fmt.Fprintln(os.Stderr, "")
-			fmt.Fprintln(os.Stderr, "  Error details:")
-			for _, e := range result.Errors {
-				fmt.Fprintf(os.Stderr, "    ✖ %s\n", e.Error())
-			}
-			fmt.Fprintln(os.Stderr, "")
-			prTitleFailed = true
-		}
+		return "", false
 	}
 
-	// Summary
+	fmt.Fprintf(os.Stderr, "PR #%s: %s\n", prNumberStr, title)
+
+	result := validator.ValidatePRTitle(title)
+	if result.Valid {
+		fmt.Fprintln(os.Stderr, "  ✅ PASS")
+		return title, false
+	}
+
+	fmt.Fprintln(os.Stderr, "  ❌ FAIL")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  Error details:")
+	for _, e := range result.Errors {
+		fmt.Fprintf(os.Stderr, "    ✖ %s\n", e.Error())
+	}
+	fmt.Fprintln(os.Stderr, "")
+	return title, true
+}
+
+// printSummary prints the validation summary and returns an error if any validation failed
+func printSummary(failedCommits []string, prTitleFailed bool, commits []string, passedCount int, title string) error {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
@@ -256,9 +273,9 @@ func validatePR(validator *commitlint.Validator) error {
 	fmt.Fprintln(os.Stderr, "   Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert")
 	fmt.Fprintln(os.Stderr, "   Max length: 72 chars (excluding JIRA prefix)")
 	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "   Full spec: https://github.com/openshift-hyperfleet/architecture/blob/main/hyperfleet/standards/commit-standard.md")
+	fmt.Fprintf(os.Stderr, "   Full spec: %s\n", commitStandardURL)
 
-	return fmt.Errorf("validation failed")
+	return errValidationFailed
 }
 
 // getCommitRange returns the base and head SHA for the PR commits
@@ -334,6 +351,14 @@ func parsePullRefs(pullRefs string) (baseSHA, prSHA string, err error) {
 	return baseSHA, prSHA, nil
 }
 
+// shortSHA truncates a SHA to at most 8 characters for display
+func shortSHA(sha string) string {
+	if len(sha) <= 8 {
+		return sha
+	}
+	return sha[:8]
+}
+
 // validateSHA checks if a string is a valid git SHA
 func validateSHA(sha string) error {
 	if sha == "" {
@@ -344,6 +369,10 @@ func validateSHA(sha string) error {
 	}
 	return nil
 }
+
+// maxCommitsInRange is a safeguard to prevent unbounded iteration
+// when the base SHA is not an ancestor of the head SHA.
+const maxCommitsInRange = 1000
 
 // getCommitsInRange returns all commit SHAs in the given range
 func getCommitsInRange(repo *git.Repository, baseSHA, headSHA string) ([]string, error) {
@@ -364,14 +393,18 @@ func getCommitsInRange(repo *git.Repository, baseSHA, headSHA string) ([]string,
 	err = commitIter.ForEach(func(c *object.Commit) error {
 		// Stop when we reach the base commit
 		if c.Hash == baseHash {
-			return ErrStopIteration
+			return errStopIteration
 		}
 		commits = append(commits, c.Hash.String())
+		if len(commits) >= maxCommitsInRange {
+			return fmt.Errorf("exceeded maximum of %d commits in range — base SHA %s may not be an ancestor of head SHA %s",
+				maxCommitsInRange, shortSHA(baseSHA), shortSHA(headSHA))
+		}
 		return nil
 	})
 
-	// ErrStopIteration is expected when we reach the base commit
-	if err != nil && !errors.Is(err, ErrStopIteration) {
+	// errStopIteration is expected when we reach the base commit
+	if err != nil && !errors.Is(err, errStopIteration) {
 		return nil, fmt.Errorf("failed to iterate commits: %w", err)
 	}
 

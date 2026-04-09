@@ -2,7 +2,10 @@
 # Makefile for hyperfleet-hooks
 # ==============================================================================
 
-.PHONY: help build build-all test test-coverage lint clean install validate-commits
+include .bingo/Variables.mk
+
+.PHONY: help build build-all test test-coverage lint clean install validate-commits \
+       check-container-tool image image-push
 
 # ==============================================================================
 # Configuration
@@ -13,10 +16,17 @@ BINARY_NAME := hyperfleet-hooks
 BIN_DIR := bin
 
 # Version information (auto-detected from git)
-APP_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+APP_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.0.0-dev")
 GIT_SHA     ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 GIT_DIRTY   ?= $(shell [ -z "$$(git status --porcelain 2>/dev/null)" ] || echo "-modified")
 BUILD_DATE  ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# Container configuration
+CONTAINER_TOOL ?= $(shell command -v podman 2>/dev/null || command -v docker 2>/dev/null)
+PLATFORM       ?= linux/amd64
+IMAGE_REGISTRY ?= quay.io/openshift-hyperfleet
+IMAGE_NAME     ?= hooks
+IMAGE_TAG      ?= $(APP_VERSION)
 
 # Build flags
 GOFLAGS ?= -trimpath
@@ -75,14 +85,9 @@ test-coverage: test ## Run tests with coverage report
 # Quality
 # ------------------------------------------------------------------------------
 
-lint: ## Run linters
+lint: $(GOLANGCI_LINT) ## Run linters
 	@echo "Running linters..."
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run --timeout=5m; \
-	else \
-		echo "⚠ golangci-lint not installed, running go fmt only"; \
-		test -z "$$(gofmt -l .)" || (echo "Files need formatting:" && gofmt -l . && exit 1); \
-	fi
+	$(GOLANGCI_LINT) run --timeout=5m
 	@echo "✓ Linting passed"
 
 # ------------------------------------------------------------------------------
@@ -99,6 +104,37 @@ install: build ## Install binary to /usr/local/bin
 	@echo "Installing $(BINARY_NAME) to /usr/local/bin..."
 	@cp $(BIN_DIR)/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME)
 	@echo "✓ Installed $(BINARY_NAME)"
+
+# ------------------------------------------------------------------------------
+# Container
+# ------------------------------------------------------------------------------
+
+check-container-tool:
+ifndef CONTAINER_TOOL
+	@echo "Error: No container tool found (podman or docker)"
+	@echo ""
+	@echo "Please install one of:"
+	@echo "  brew install podman   # macOS"
+	@echo "  brew install docker   # macOS"
+	@echo "  dnf install podman    # Fedora/RHEL"
+	@exit 1
+endif
+
+image: check-container-tool ## Build container image
+	@echo "Building container image..."
+	$(CONTAINER_TOOL) build \
+		--platform $(PLATFORM) \
+		--build-arg GIT_SHA=$(GIT_SHA) \
+		--build-arg GIT_DIRTY=$(GIT_DIRTY) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		--build-arg APP_VERSION=$(APP_VERSION) \
+		-t $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG) .
+	@echo "✓ Built $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)"
+
+image-push: check-container-tool image ## Build and push container image
+	@echo "Pushing container image..."
+	$(CONTAINER_TOOL) push $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
+	@echo "✓ Pushed $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)"
 
 # ------------------------------------------------------------------------------
 # CI

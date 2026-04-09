@@ -1,13 +1,21 @@
 # Binaries
 bin/
 *.exe
+*.exe~
 *.dll
 *.so
 *.dylib
 
-# Test artifacts
-coverage.out
+# Build artifacts
+build/
+*.o
+*.a
+
+# Test coverage
+coverage.txt
 coverage.html
+coverage.out
+*.coverprofile
 *.test
 
 # Go workspace
@@ -24,6 +32,14 @@ go.work.sum
 # OS
 .DS_Store
 Thumbs.db
+
+# Environment files
+.env
+.env.local
+*.local
+
+# Dependency directories (if vendoring)
+vendor/
 
 # Node.js (if any legacy files exist)
 node_modules/
