@@ -46,7 +46,7 @@ ENTRYPOINT ["/app/hyperfleet-hooks"]
 CMD ["--help"]
 
 ARG APP_VERSION="0.0.0-dev"
-LABEL name="hyperfleet-hooks" \
+LABEL name="hyperfleet-git-hooks" \
       vendor="Red Hat" \
       version="${APP_VERSION}" \
       summary="HyperFleet Hooks - Pre-commit Validators" \

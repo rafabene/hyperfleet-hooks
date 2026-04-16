@@ -25,7 +25,7 @@ BUILD_DATE  ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 CONTAINER_TOOL ?= $(shell command -v podman 2>/dev/null || command -v docker 2>/dev/null)
 PLATFORM       ?= linux/amd64
 IMAGE_REGISTRY ?= quay.io/openshift-hyperfleet
-IMAGE_NAME     ?= hooks
+IMAGE_NAME     ?= hyperfleet-git-hooks
 IMAGE_TAG      ?= $(APP_VERSION)
 
 # Build flags
@@ -128,13 +128,17 @@ image: check-container-tool ## Build container image
 		--build-arg GIT_DIRTY=$(GIT_DIRTY) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
 		--build-arg APP_VERSION=$(APP_VERSION) \
-		-t $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG) .
+		-t $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG) \
+		-t $(IMAGE_REGISTRY)/$(IMAGE_NAME):latest .
 	@echo "✓ Built $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)"
+	@echo "✓ Built $(IMAGE_REGISTRY)/$(IMAGE_NAME):latest"
 
 image-push: check-container-tool image ## Build and push container image
 	@echo "Pushing container image..."
 	$(CONTAINER_TOOL) push $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
+	$(CONTAINER_TOOL) push $(IMAGE_REGISTRY)/$(IMAGE_NAME):latest
 	@echo "✓ Pushed $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)"
+	@echo "✓ Pushed $(IMAGE_REGISTRY)/$(IMAGE_NAME):latest"
 
 # ------------------------------------------------------------------------------
 # CI
