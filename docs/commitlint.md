@@ -93,7 +93,7 @@ presubmits:
     spec:
       containers:
       - name: validate
-        image: quay.io/openshift-hyperfleet/hooks:latest
+        image: quay.io/openshift-hyperfleet/hyperfleet-git-hooks:latest
         command:
         - hyperfleet-hooks
         - commitlint
@@ -150,7 +150,7 @@ All HyperFleet components use the same container image. **No installation requir
 └─────────────────────────────────┘
               │
               ▼
-   quay.io/openshift-hyperfleet/hooks:latest
+   quay.io/openshift-hyperfleet/hyperfleet-git-hooks:latest
               │
     ┌─────────┼─────────┬─────────┐
     ▼         ▼         ▼         ▼
@@ -167,8 +167,8 @@ Components just reference the image in Prow configuration. No dependencies to in
 ```bash
 # In openshift/release repository
 cd ci-operator/jobs/openshift-hyperfleet/
-sed -i 's|hooks:v1.0.0|hooks:v1.1.0|g' */*-presubmits.yaml
-git commit -m "ci: update hyperfleet-hooks to v1.1.0"
+sed -i 's|hyperfleet-git-hooks:v1.0.0|hyperfleet-git-hooks:v1.1.0|g' */*-presubmits.yaml
+git commit -m "ci: update hyperfleet-git-hooks to v1.1.0"
 ```
 
 ## CLI Reference

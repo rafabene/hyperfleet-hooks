@@ -34,7 +34,7 @@ From this point on, every `git commit` in that repository will validate the comm
 
 ### For CI (Prow)
 
-In Prow, a pre-built container image (`quay.io/openshift-hyperfleet/hooks`) is used to validate all commits and the PR title. See the [commitlint documentation](docs/commitlint.md) for Prow configuration details.
+In Prow, a pre-built container image (`quay.io/openshift-hyperfleet/hyperfleet-git-hooks`) is used to validate all commits and the PR title. See the [commitlint documentation](docs/commitlint.md) for Prow configuration details.
 
 ## Available Hooks
 
@@ -101,6 +101,36 @@ make test     # Run tests
 make lint     # Run linters (requires golangci-lint, managed by bingo)
 make image    # Build container image
 ```
+
+### Releasing a New Version
+
+To build and publish the container image to quay.io:
+
+1. Create a release tag:
+
+   ```bash
+   git tag v0.1.0
+   git push upstream v0.1.0
+   ```
+
+2. Build the container image (tags both version and `latest`):
+
+   ```bash
+   make image IMAGE_TAG=v0.1.0
+   ```
+
+3. Push the image to quay.io:
+
+   ```bash
+   make image-push IMAGE_TAG=v0.1.0
+   ```
+
+4. Verify the image is pullable:
+
+   ```bash
+   podman pull quay.io/openshift-hyperfleet/hyperfleet-git-hooks:v0.1.0
+   podman pull quay.io/openshift-hyperfleet/hyperfleet-git-hooks:latest
+   ```
 
 ## License
 

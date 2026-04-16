@@ -162,12 +162,10 @@ func TestGetCommitRange_EnvVariables(t *testing.T) {
 	worktree, err := repo.Worktree()
 	require.NoError(t, err)
 	testFile := filepath.Join(tempDir, "test.txt")
-	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
-		t.Fatalf("Failed to write test file: %v", err)
-	}
-	if _, err := worktree.Add("test.txt"); err != nil {
-		t.Fatalf("Failed to add test file: %v", err)
-	}
+	err = os.WriteFile(testFile, []byte("test"), 0644)
+	require.NoError(t, err)
+	_, err = worktree.Add("test.txt")
+	require.NoError(t, err)
 	initialCommit, err := worktree.Commit("initial commit", &git.CommitOptions{
 		Author: &object.Signature{Name: "Test", Email: "test@example.com"},
 	})
@@ -352,12 +350,10 @@ func TestGetCommitMessage(t *testing.T) {
 
 	// Create a commit with multi-line message
 	testFile := filepath.Join(tempDir, "test.txt")
-	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
-		t.Fatalf("Failed to write test file: %v", err)
-	}
-	if _, err := worktree.Add("test.txt"); err != nil {
-		t.Fatalf("Failed to add test file: %v", err)
-	}
+	err = os.WriteFile(testFile, []byte("test"), 0644)
+	require.NoError(t, err)
+	_, err = worktree.Add("test.txt")
+	require.NoError(t, err)
 
 	multilineMessage := `feat: add new feature
 
